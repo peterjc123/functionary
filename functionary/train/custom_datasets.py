@@ -809,6 +809,7 @@ class LazyPreprocessDataset(Dataset):
             messages=self.raw_data[i],
             tokenizer=self.tokenizer,
             keep_assistant_prefix=self.keep_assistant_prefix,
+            padding="longest",
         )
         ret = {
             "input_ids": ret["inputs"]["input_ids"],
