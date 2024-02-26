@@ -172,13 +172,13 @@ def load_model_with_rope_scaling(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
     )
-    orig_ctx_len = getattr(config, "max_position_embeddings", None)
-    if orig_ctx_len and training_args.model_max_length > orig_ctx_len:
-        print(
-            f"have to use rope-scaling, original max_leng={orig_ctx_len}, scaled to: {training_args.model_max_length}",
-        )
-        scaling_factor = float(math.ceil(training_args.model_max_length / orig_ctx_len))
-        config.rope_scaling = {"type": "linear", "factor": scaling_factor}
+    # orig_ctx_len = getattr(config, "max_position_embeddings", None)
+    # if orig_ctx_len and training_args.model_max_length > orig_ctx_len:
+    #     print(
+    #         f"have to use rope-scaling, original max_leng={orig_ctx_len}, scaled to: {training_args.model_max_length}",
+    #     )
+    #     scaling_factor = float(math.ceil(training_args.model_max_length / orig_ctx_len))
+    #     config.rope_scaling = {"type": "linear", "factor": scaling_factor}
     config.use_cache = False
 
     compute_dtype = (
