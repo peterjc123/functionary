@@ -127,6 +127,10 @@ def monkey_patch_packing_mistral():
     transformers.models.mistral.modeling_mistral._get_unpad_data = get_unpad_data
 
 
+def monkey_patch_packing_qwen2():
+    transformers.models.mistral.modeling_qwen2._get_unpad_data = get_unpad_data
+
+
 def monkey_patch_packing_mixtral():
     transformers.models.mixtral.modeling_mixtral._get_unpad_data = get_unpad_data
     transformers.models.mixtral.modeling_mixtral.load_balancing_loss_func = (

@@ -18,11 +18,13 @@ import transformers
 from deepspeed import zero
 from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft.tuners.lora import LoraLayer
 from transformers import (
     AutoConfig,
     BitsAndBytesConfig,
     LlamaTokenizer,
     LlamaTokenizerFast,
+    AutoTokenizer,
     Trainer,
     deepspeed,
 )
@@ -59,6 +61,9 @@ class DataArguments:
     )
     packing: bool = field(
         default=False, metadata={"help": "Whether use packing or not"}
+    )
+    pack_length: int  = field(
+        default=None, metadata={"help": "Packing length."}
     )
 
 
@@ -209,8 +214,15 @@ def load_model_with_rope_scaling(
             )
 
             monkey_patch_packing_mixtral()
+        elif "qwen" in config_type:
+            print_rank0("using Monkey-patched Qwen2")
+            from functionary.train.packing.monkey_patch_packing import (
+                monkey_patch_packing_qwen2,
+            )
+
+            monkey_patch_packing_qwen2()
         else:
-            print("packing only supports models: Mistral, Llama, Mixtral")
+            print("packing only supports models: Mistral, Llama, Mixtral, Qwen2")
             sys.exit(1)
 
     model = transformers.AutoModelForCausalLM.from_pretrained(
@@ -252,7 +264,7 @@ def prepare_model_for_training(
         lora_dropout=lora_args.lora_dropout,
         bias=lora_args.lora_bias,
         task_type="CAUSAL_LM",
-        modules_to_save=["lm_head", "embed_tokens"],  # because we retrain the embedding
+        # modules_to_save=["lm_head", "embed_tokens"],  # because we retrain the embedding
     )
 
     if lora_args.q_lora:
@@ -375,38 +387,51 @@ def initialize_tokenizer(
 ):
     """Initialize tokenizer and add special tokens, resizing vocab and embedding"""
     # note that must set legacy=True, read more: https://github.com/huggingface/transformers/issues/25176
-    tokenizer = LlamaTokenizerFast.from_pretrained(
-        model_name_or_path,
-        cache_dir=cache_dir,
-        model_max_length=model_max_length,
-        legacy=True,
-    )
+    if model.config.model_type == 'qwen2':
+        tokenizer = LlamaTokenizerFast.from_pretrained(
+            model_name_or_path,
+            cache_dir=cache_dir,
+            model_max_length=model_max_length,
+            padding_side="right",
+        )
+    else:
+        tokenizer = LlamaTokenizerFast.from_pretrained(
+            model_name_or_path,
+            cache_dir=cache_dir,
+            model_max_length=model_max_length,
+            legacy=True,
+        )
 
     # Add special tokens
-    tokenizer.pad_token = tokenizer.unk_token
-    prompt_template = prompt_template = get_prompt_template_by_version(
-        prompt_template_version
-    )
-    special_tokens = {
-        "additional_special_tokens": prompt_template.get_additional_tokens()
-    }
-    num_new_tokens = tokenizer.add_special_tokens(special_tokens)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.unk_token
 
-    # Resize embedding
-    model.resize_token_embeddings(len(tokenizer))
-    if num_new_tokens > 0:
-        input_embeddings = model.get_input_embeddings().weight.data
-        output_embeddings = model.get_output_embeddings().weight.data
+    if model.config.model_type == 'qwen2':
+        tokenizer.pad_token = "<|endoftext|>"
 
-        input_embeddings_avg = input_embeddings[:-num_new_tokens].mean(
-            dim=0, keepdim=True
-        )
-        output_embeddings_avg = output_embeddings[:-num_new_tokens].mean(
-            dim=0, keepdim=True
-        )
+    # prompt_template = prompt_template = get_prompt_template_by_version(
+    #     prompt_template_version
+    # )
+    # special_tokens = {
+    #     "additional_special_tokens": prompt_template.get_additional_tokens()
+    # }
+    # num_new_tokens = tokenizer.add_special_tokens(special_tokens)
 
-        input_embeddings[-num_new_tokens:] = input_embeddings_avg
-        output_embeddings[-num_new_tokens:] = output_embeddings_avg
+    # # Resize embedding
+    # model.resize_token_embeddings(len(tokenizer))
+    # if num_new_tokens > 0:
+    #     input_embeddings = model.get_input_embeddings().weight.data
+    #     output_embeddings = model.get_output_embeddings().weight.data
+
+    #     input_embeddings_avg = input_embeddings[:-num_new_tokens].mean(
+    #         dim=0, keepdim=True
+    #     )
+    #     output_embeddings_avg = output_embeddings[:-num_new_tokens].mean(
+    #         dim=0, keepdim=True
+    #     )
+
+    #     input_embeddings[-num_new_tokens:] = input_embeddings_avg
+    #     output_embeddings[-num_new_tokens:] = output_embeddings_avg
 
     return tokenizer
 
@@ -458,6 +483,18 @@ def train():
 
     model = prepare_model_for_training(model, training_args, lora_args)
 
+    if lora_args.q_lora:
+        for name, module in model.named_modules():
+            if isinstance(module, LoraLayer):
+                if training_args.bf16:
+                    module = module.to(torch.bfloat16)
+            if type(module).__name__ == 'RMSNorm':
+                module = module.to(torch.bfloat16)
+            if 'lm_head' in name or 'embed_tokens' in name or "wte" in name or "wpe" in name:
+                if hasattr(module, 'weight'):
+                    if training_args.bf16 and module.weight.dtype == torch.float32:
+                        module = module.to(torch.bfloat16)
+
     def preprocess_logits_for_metrics(logits, labels):
         """Preprocesses the logits during evaluation by computing the greedy token predictions for
         accuracy calculation and loss values for perplexity calculation. Both pred_ids and loss are
@@ -467,7 +504,7 @@ def train():
         loss_fn = CrossEntropyLoss(reduction="none")
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
-        shift_logits = shift_logits.view(-1, len(tokenizer))
+        shift_logits = shift_logits.view(-1, shift_logits.size(-1))
         shift_labels = shift_labels.view(-1)
         loss = loss_fn(shift_logits, shift_labels)
         loss = torch.mean(loss.view(logits.shape[0], -1), dim=-1)

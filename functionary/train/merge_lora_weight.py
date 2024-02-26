@@ -2,7 +2,7 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
-from transformers import AutoModelForCausalLM, LlamaTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from functionary.prompt_template import get_prompt_template_by_version
 from peft import PeftModel
 import torch
@@ -11,27 +11,32 @@ import transformers
 import math 
 
 
-def merge_weight(save_folder: str, pretrained_path: str, checkpoint: str, model_max_length: int, prompt_template_version: str):
+def merge_weight(save_folder: str, pretrained_path: str, checkpoint: str):
     print("save to: ", save_folder)
     print("pretrained: ", pretrained_path)
     print("checkpoint: ", checkpoint)
-    tokenizer = LlamaTokenizer.from_pretrained(pretrained_path, legacy=True, model_max_length=model_max_length)
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_path, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.unk_token
     
-    prompt_template = get_prompt_template_by_version(prompt_template_version)
-    special_tokens = {"additional_special_tokens": prompt_template.get_additional_tokens()}
-    num_new_tokens = tokenizer.add_special_tokens(special_tokens)
-    print("number of new tokens: ", num_new_tokens)
+    # prompt_template = get_prompt_template_by_version(prompt_template_version)
+    # special_tokens = {"additional_special_tokens": prompt_template.get_additional_tokens()}
+    # num_new_tokens = tokenizer.add_special_tokens(special_tokens)
+    # print("number of new tokens: ", num_new_tokens)
     
     config = transformers.AutoConfig.from_pretrained(
-        pretrained_path
+        pretrained_path, trust_remote_code=True
     )
-    orig_ctx_len = getattr(config, "max_position_embeddings", None)
-    if orig_ctx_len and model_max_length > orig_ctx_len:
-        print("need to scale ...")
-        scaling_factor = float(math.ceil(model_max_length / orig_ctx_len))
-        config.rope_scaling = {"type": "linear", "factor": scaling_factor}
-    config.use_cache = False
+
+    if config.model_type == 'qwen2':
+        tokenizer.pad_token = "<|endoftext|>"
+
+    # orig_ctx_len = getattr(config, "max_position_embeddings", None)
+    # if orig_ctx_len and model_max_length > orig_ctx_len:
+    #     print("need to scale ...")
+    #     scaling_factor = float(math.ceil(model_max_length / orig_ctx_len))
+    #     config.rope_scaling = {"type": "linear", "factor": scaling_factor}
+    # config.use_cache = False
 
     model = AutoModelForCausalLM.from_pretrained(
         pretrained_path,
@@ -42,9 +47,9 @@ def merge_weight(save_folder: str, pretrained_path: str, checkpoint: str, model_
         use_flash_attention_2=True,
     )
     print("model = ", model)
-    model.resize_token_embeddings(len(tokenizer))
+    # model.resize_token_embeddings(len(tokenizer))
 
-    lora_model = PeftModel.from_pretrained(model, checkpoint, torch_dtype=torch.float16)
+    lora_model = PeftModel.from_pretrained(model, checkpoint, torch_dtype=torch.bfloat16)
     lora_model = lora_model.merge_and_unload()
     lora_model.save_pretrained(save_folder)
     tokenizer.save_pretrained(save_folder)

@@ -343,20 +343,21 @@ def prepare_training_inputs_batch(
             inputs: a dictionary containing: input_ids, attention_mask, labels. This will be used in model.forward(**inputs)
     """
     # a dictionary mapping from end_token_ --> end_token
-    prompt_template = get_prompt_template_from_tokenizer(tokenizer)
-    assistant_stop_token_ids = get_assistant_stop_token_ids(prompt_template, tokenizer)
-    assistant_prefix_tokens = get_prefix_assistant_token_ids(prompt_template, tokenizer)
+    # prompt_template = get_prompt_template_from_tokenizer(tokenizer)
+    # assistant_stop_token_ids = get_assistant_stop_token_ids(prompt_template, tokenizer)
+    # assistant_prefix_tokens = get_prefix_assistant_token_ids(prompt_template, tokenizer)
 
     prompt_str_list = []
     for messages in batch_messages:
-        # old format: functions, new format: tools
-        tools_or_functions = (
-            messages["tools"] if "tools" in messages else messages.get("functions", [])
-        )
+        # # old format: functions, new format: tools
+        # tools_or_functions = (
+        #     messages["tools"] if "tools" in messages else messages.get("functions", [])
+        # )
 
-        prompt_str = prompt_template.get_prompt_from_messages(
-            messages["messages"], tools_or_functions
-        )  # prompt_str is the concatenation of all prompts from messages
+        # prompt_str = prompt_template.get_prompt_from_messages(
+        #     messages["messages"], tools_or_functions
+        # )  # prompt_str is the concatenation of all prompts from messages
+        prompt_str = messages["text"]
         prompt_str_list.append(prompt_str)
     max_length = max_length if max_length is not None else tokenizer.model_max_length
 
@@ -365,16 +366,29 @@ def prepare_training_inputs_batch(
     )
     # input_token_ids = input_dic["input_ids"]
     batch_labels = []
-    for input_token_ids in input_dic["input_ids"]:
-        labels = get_masked_labels(
-            input_token_ids=input_token_ids,
-            tokenizer=tokenizer,
-            assistant_prefix_tokens=assistant_prefix_tokens,
-            assistant_stop_tokens=assistant_stop_token_ids,
-            keep_assistant_prefix=keep_assistant_prefix,
-            verbose=verbose,
-        )
+    # for input_token_ids in input_dic["input_ids"]:
+    #     labels = get_masked_labels(
+    #         input_token_ids=input_token_ids,
+    #         tokenizer=tokenizer,
+    #         assistant_prefix_tokens=assistant_prefix_tokens,
+    #         assistant_stop_tokens=assistant_stop_token_ids,
+    #         keep_assistant_prefix=keep_assistant_prefix,
+    #         verbose=verbose,
+    #     )
 
+    for j, input_token_ids in enumerate(input_dic["input_ids"]):
+        labels = [-100 for _ in range(len(input_token_ids))]
+        split_indices = [i for i, x in enumerate(input_token_ids) if x == 151644]
+        split_indices = [i for i in split_indices if i + 1 < len(input_token_ids) and input_token_ids[i + 1] == 77091]
+        split_indices = [i for i in split_indices if i + 2 < len(input_token_ids) and input_token_ids[i + 2] == 198]
+        assert len(split_indices) > 0, f"{repr(prompt_str_list[j])} is invalid"
+        for split_idx in split_indices:
+            # Target data starts with `<|im_start|>`, `assistant` and `\n`.
+            for k in range(split_idx + 3, len(input_token_ids)):
+                labels[k] = input_token_ids[k]
+                # Target data stops with `<|im_end|>`
+                if input_token_ids[k] == 151645:
+                    break
         batch_labels.append(labels)
         assert len(labels) == len(input_token_ids)
 
