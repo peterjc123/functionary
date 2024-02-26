@@ -388,7 +388,7 @@ def initialize_tokenizer(
     """Initialize tokenizer and add special tokens, resizing vocab and embedding"""
     # note that must set legacy=True, read more: https://github.com/huggingface/transformers/issues/25176
     if model.config.model_type == 'qwen2':
-        tokenizer = LlamaTokenizerFast.from_pretrained(
+        tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path,
             cache_dir=cache_dir,
             model_max_length=model_max_length,
