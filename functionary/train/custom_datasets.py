@@ -880,3 +880,25 @@ class PackedDataset(CachedDataset):
         print(
             f"original avg length: {original_avg_length}; avg packed length: {avg_packed_length}"
         )
+
+
+class SimpleCollator:
+    def __init__(self, tokenizer) -> None:
+        self.tokenzier = tokenizer
+
+    def __call__(self, examples):
+        max_len = max((len(x['input_ids']) for x in examples))
+
+        input_ids = []
+        labels = []
+        for example in examples:
+            size = len(example['input_ids'])
+            if self.tokenzier.padding_side == 'left':
+                example_input_ids = [self.tokenzier.pad_token_id] * (max_len - size) + example['input_ids'].tolist()
+                example_labels = [-100] * (max_len - size) + example['labels'].tolist()
+            else:
+                example_input_ids = example['input_ids'].tolist() + [self.tokenzier.pad_token_id] * (max_len - size)
+                example_labels = example['labels'].tolist() + [-100] * (max_len - size)
+            input_ids.append(example_input_ids)
+            labels.append(example_labels)
+        return {"input_ids": torch.tensor(input_ids), "labels": torch.tensor(labels)}

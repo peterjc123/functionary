@@ -128,7 +128,7 @@ def monkey_patch_packing_mistral():
 
 
 def monkey_patch_packing_qwen2():
-    transformers.models.mistral.modeling_qwen2._get_unpad_data = get_unpad_data
+    transformers.models.qwen2.modeling_qwen2._get_unpad_data = get_unpad_data
 
 
 def monkey_patch_packing_mixtral():
