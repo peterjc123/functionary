@@ -346,10 +346,8 @@ def train():
         lora_args,
     ) = argument_parser.parse_args_into_dataclasses()
 
-    assert not data_args.packing, "Packing is not supported for MLX"
     assert not lora_args.q_lora, "QLoRA is not supported for MLX"
     assert not training_args.gradient_checkpointing, "Gradient checkpointing is not supported"
-    # assert training_args.gradient_accumulation_steps == 1, "Gradient accumulation is not supported"
 
     print_rank0("lora args: ", lora_args)
 
@@ -369,6 +367,36 @@ def train():
     # )
     #
     model, tokenizer = mlx_lm.load(model_args.model_name_or_path)
+
+    if data_args.packing:
+        if model.model_type == "qwen2":
+            print_rank0("using Monkey-patched Qwen2")
+
+            def patched_call(self, inputs, cache=None):
+                h = self.embed_tokens(inputs)
+
+                mask = cache
+                if mask is None:
+                    if h.shape[1] > 1:
+                        mask = nn.MultiHeadAttention.create_additive_causal_mask(h.shape[1])
+                        mask = mask.astype(h.dtype)
+                else:
+                    slices = [mask[i] for i in range(mask.shape[0])]
+                    masks = [(~mx.triu(m[:, None] == m[None])) * -1e9 for m in slices]
+                    mask = mx.expand_dims(mx.stack(masks, 0), 1)
+                    mask = mask.astype(h.dtype)
+
+                cache = [None] * len(self.layers)
+
+                for e, layer in enumerate(self.layers):
+                    h, cache[e] = layer(h, mask, cache[e])
+
+                return self.norm(h), cache
+
+            model.model.__call__ = patched_call.__get__(model.model, type(model.model))
+        else:
+            print_rank0("packing only supports models: Qwen2")
+            sys.exit(1)
 
     tokenizer.model_max_length = training_args.model_max_length
     tokenizer.padding_side = "right"

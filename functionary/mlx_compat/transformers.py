@@ -113,8 +113,8 @@ def get_model_param_count(model, trainable_only=False):
 
     return sum(param.size for _, param in tree_flatten(params))
 
-def loss_func(model, input_ids, labels):
-    logits, _ = model(input_ids)
+def loss_func(model, input_ids, labels, attention_mask=None):
+    logits, _ = model(input_ids, cache=attention_mask)
     logits = logits.astype(mx.float32)
 
     shift_logits = logits[..., :-1, :]
@@ -238,7 +238,8 @@ class MLXTrainer(Trainer):
         return (loss, logits, labels)
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        inputs.pop("attention_mask", None)
+        if type(self.data_collator).__name__ == 'SimpleCollator':
+            inputs.pop("attention_mask", None)
         if inputs.pop("is_training", False):
             loss_value_and_grad = nn.value_and_grad(model, loss_func)
 
