@@ -287,6 +287,7 @@ def train():
     # prompt_template = get_prompt_template_by_version(
     #     training_args.prompt_template_version
     # )
+    prompt_template = None
 
     tokenizer = initialize_tokenizer(
         model=model,
